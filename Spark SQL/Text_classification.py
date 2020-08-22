@@ -100,3 +100,105 @@ result.select('invec', 'outvec').show(3, False)
     |(126,[15,78],[1.0,1.0])             |(126,[21],[1.0])|
     +------------------------------------+----------------+
 '''
+'Label the data'
+# Import the lit function
+from pyspark.sql.functions import lit
+
+# Select the rows where endword is 'him' and label 1
+df_pos = df.where("endword = 'him'")\
+           .withColumn('label', lit(1))
+
+# Select the rows where endword is not 'him' and label 0
+df_neg = df.where("endword <> 'him'")\
+           .withColumn('label', lit(0))
+
+# Union pos and neg in equal number
+df_examples = df_pos.union(df_neg.limit(df_pos.count()))
+print("Number of examples: ", df_examples.count())
+df_examples.where("endword <> 'him'").sample(False, .1, 42).show(5)
+
+'''
++-------+--------------------+--------------------+------------------+-----+
+|endword|                 doc|            features|            outvec|label|
++-------+--------------------+--------------------+------------------+-----+
+|      i|[the, adventure, ...|(12847,[0,3,3766,...|(12847,[11],[1.0])|    0|
+|     he|[it, is, simplici...|(12847,[7,16,23,4...| (12847,[6],[1.0])|    0|
+|     it|[why, should, i, ...|(12847,[2,11,109,...| (12847,[7],[1.0])|    0|
+|     it|[and, she, will, ...|(12847,[1,26,47,6...| (12847,[7],[1.0])|    0|
+|   said|[there, are, thre...|(12847,[1,5,6,38,...|(12847,[23],[1.0])|    0|
++-------+--------------------+--------------------+------------------+-----+
+'''
+
+'Split the data'
+# Split the examples into train and test, use 80/20 split
+df_trainset, df_testset = df_examples.randomSplit((0.80, 0.20), 42)
+
+# Print the number of training examples
+print("Number training: ", df_trainset.count())
+
+# Print the number of test examples
+print("Number test: ", df_testset.count())
+'''
+Number training:  2091
+Number test:  495
+'''
+
+'Train the classifier'
+# Import the logistic regression classifier
+from pyspark.ml.classification import LogisticRegression
+
+# Instantiate logistic setting elasticnet to 0.0
+logistic = LogisticRegression(maxIter=100, regParam=0.4, elasticNetParam=0.0)
+
+# Train the logistic classifer on the trainset
+df_fitted = logistic.fit(df_trainset)
+
+# Print the number of training iterations
+print("Training iterations: ", df_fitted.summary.totalIterations)
+'''Training iterations:  21'''
+
+'Evaluate the classifier'
+# Score the model on test data
+testSummary = df_fitted.evaluate(df_testset)
+
+# Print the AUC metric
+print("\ntest AUC: %.3f" % testSummary.areaUnderROC)
+'''test AUC: 0.890'''
+
+'Predict test data'
+# Apply the model to the test data
+predictions = df_fitted.transform(df_testset).select(fields)
+
+# Print incorrect if prediction does not match label
+for x in predictions.take(8):
+    print()
+    if x.label != int(x.prediction):
+        print("INCORRECT ==> ")
+    for y in fields:
+        print(y,":", x[y])
+'''
+prediction : 1.0
+label : 1
+endword : him
+doc : ['and', 'pierre', 'felt', 'that', 'their', 'opinion', 'placed', 'responsibilities', 'upon', 'him']
+probability : [0.28537355252312796,0.714626447476872]
+
+prediction : 1.0
+label : 1
+endword : him
+doc : ['at', 'the', 'time', 'of', 'that', 'meeting', 'it', 'had', 'not', 'produced', 'an', 'effect', 'upon', 'him']
+probability : [0.4223142404987621,0.5776857595012379]
+
+INCORRECT ==> 
+prediction : 0.0
+label : 1
+endword : him
+doc : ['bind', 'him', 'bind', 'him']
+probability : [0.5623411025382637,0.43765889746173625]
+
+prediction : 1.0
+label : 1
+endword : him
+doc : ['bolkonski', 'made', 'room', 'for', 'him', 'on', 'the', 'bench', 'and', 'the', 'lieutenant', 'colonel', 'sat', 'down', 'beside', 'him']
+probability : [0.3683499060175795,0.6316500939824204]
+'''
